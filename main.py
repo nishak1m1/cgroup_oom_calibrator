@@ -2,6 +2,7 @@
 
 import time
 import logging
+import json
 from check_load import *
 from parse_cgroups import *
 from manage_global_cgroup import *
@@ -12,12 +13,29 @@ from logging_config import setup_logging
 setup_logging()
 logging = logging.getLogger(__name__)
 
-def from_where_to_pick_memory():
+def from_where_to_pick_memory(cgroup_with_oom):
     """Determine where to allocate memory."""
-    # Return "global" or a list of cgroups
-    # in case of global, find min[(Threshold - current memory.max_usage_in_byte),<last stored value from log file>].
-    # And update log file with new info before returning.
-    return "global"  # Assuming memory allocation from global cgroup for now
+    # Return "global" or a list of cgroups or a null list in case no cgroup have sufficient bw.
+    file_path = 'stats_from_samples.json'
+    min_usage, max_usage = 0, 0
+    try:
+        # Open and read the JSON file
+        with open(file_path, 'r') as file:
+            data = json.load(file)
+        if cgroup_with_oom in data:
+            # Extract the "min" value for "memory.usage_in_bytes"
+            min_usage = data[cgroup_name].get('memory.usage_in_bytes', {}).get('min')
+            max_usage = data[cgroup_name].get('memory.max_usage_in_bytes', {}).get('max')
+        else:
+            logger.warning(f"The cgroup '{cgroup_with_oom}' is not present in the JSON data.")
+
+    requirement = max_usage - min_usage
+
+    if global_cgroup_limit_calculator() >= requirement:
+        return "global"
+    else:
+        cgroups_with_bw = sort_cgroups_with_maximum_memory_bw()
+        return cgroups_with_bw
 
 def collect_data(cgroups, sampling_interval, sampling_time):
     """Thread function to collect data when system load is fine."""
@@ -34,19 +52,21 @@ def monitor_and_adjust(cgroups, sampling_interval):
     oom_detected = False
 
     while True:
-        if detect_cgroup_ooms(cgroups):
-            oom_detected = True
+        cgroup_with_oom = detect_cgroup_ooms(cgroups)
+        if cgroup_with_oom:
             logging.info("OOM detected. Initiating calibration process.")
             if load_checker():
-                decision = from_where_to_pick_memory()
+                decision = from_where_to_pick_memory(cgroup_with_oom)
                 amount_of_memory = 1024  # Example amount of memory to allocate
                 if decision == "global":
                     allocate_mem_from_global_cgroup(amount_of_memory)
-                else:
+                elif decision:
                     allocate_mem_from_selected_cgroup(decision, amount_of_memory)
                     adjust_cgroup_limit(decision, amount_of_memory)
+                else:
+                    logging.info("No memory available to allocate.")
         else:
-            if oom_detected and load_checker():
+            if cgroup_with_oom and load_checker():
                 logging.info("OOM resolved. Reverting limits.")
                 revert_limits(cgroups, previous_limits)
                 oom_detected = False
