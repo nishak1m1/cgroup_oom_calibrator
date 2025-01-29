@@ -12,6 +12,9 @@ from logging_config import setup_logging
 # Set up logging. Only single instance of calibration_logger.log for every module
 setup_logging()
 logging = logging.getLogger(__name__)
+# For current cgroup with oom, what is required amound of memory to be fullfilled
+# in current iteration.
+requirement = 0
 
 def from_where_to_pick_memory(cgroup_with_oom):
     """Determine where to allocate memory."""
@@ -57,12 +60,12 @@ def monitor_and_adjust(cgroups, sampling_interval):
             logging.info("OOM detected. Initiating calibration process.")
             if load_checker():
                 decision = from_where_to_pick_memory(cgroup_with_oom)
-                amount_of_memory = 1024  # Example amount of memory to allocate
+
                 if decision == "global":
-                    allocate_mem_from_global_cgroup(amount_of_memory)
+                    allocate_mem_from_global_cgroup(requirement, cgroup_with_oom)
                 elif decision:
-                    allocate_mem_from_selected_cgroup(decision, amount_of_memory)
-                    adjust_cgroup_limit(decision, amount_of_memory)
+                    allocate_mem_from_selected_cgroup(decision, requirement)
+                    adjust_cgroup_limit(decision, requirement)
                 else:
                     logging.info("No memory available to allocate.")
         else:

@@ -1,9 +1,13 @@
 from logging_config import setup_logging
 import logging
+import queue
 
 setup_logging()
 
 logger = logging.getLogger(__name__)
+
+# Global queue to store memory allocation operations
+global_queue = queue.Queue()
 
 # manage_global_cgroup.py
 # Most of the global OOM cases are recorded when min watermark is around 15-17% short of free mark.
@@ -50,6 +54,42 @@ def global_cgroup_limit_calculator():
     except ValueError as e:
         logger.error(f"Parsing error: {e}")
 
-def allocate_mem_from_global_cgroup(amount_of_memory):
-    """Placeholder for allocating memory from the global cgroup."""
-    logging.info(f"Allocating {amount_of_memory} from global cgroup.")
+def allocate_mem_from_global_cgroup(amount_of_memory,cgroup_with_oom):
+    global_cgroup_path = "/sys/fs/cgroup/memory"
+    oom_cgroup_path = os.path.join("/sys/fs/cgroup/memory", cgroup_with_oom)
+    try:
+        # Decrease memory limit of the global cgroup locally, no in place change required as limit is too high
+        with open(os.path.join(global_cgroup_path, 'memory.limit_in_bytes'), 'r+') as global_limit_file:
+            current_global_limit = int(global_limit_file.read().strip())
+            new_global_limit = current_global_limit - amount_of_memory
+
+        # Log the decrease operation
+        logger.info(f"Decreased memory limit of global cgroup by {amount_of_memory} bytes. New limit: {new_global_limit} bytes")
+
+        # Increase memory limit of the cgroup facing OOM
+        with open(os.path.join(oom_cgroup_path, 'memory.limit_in_bytes'), 'r+') as oom_limit_file:
+            current_oom_limit = int(oom_limit_file.read().strip())
+            new_oom_limit = current_oom_limit + amount_of_memory
+            oom_limit_file.seek(0)
+            oom_limit_file.write(str(new_oom_limit))
+            oom_limit_file.truncate()
+
+        # Log the increase operation
+        logger.info(f"Increased memory limit of OOM cgroup '{cgroup_with_oom}' by {amount_of_memory} bytes. New limit: {new_oom_limit} bytes")
+
+        # Store the operation in the global queue
+        operation_info = {
+            "source": global_cgroup_path,
+            "amount_taken": amount_of_memory,
+            "target": oom_cgroup_path,
+            "amount_given": amount_of_memory
+        }
+        global_queue.put(operation_info)
+
+        # Log the operation stored in the queue
+        logger.info(f"Stored operation in global queue: {operation_info}")
+
+    except IOError as e:
+        logger.error(f"Failed to allocate memory: {e}")
+    except ValueError as e:
+        logger.error(f"Invalid memory limit value: {e}")
