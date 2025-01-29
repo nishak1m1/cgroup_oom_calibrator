@@ -6,9 +6,11 @@ from check_load import *
 from parse_cgroups import *
 from manage_global_cgroup import *
 from adjust_memory import *
+from logging_config import setup_logging
 
-# Set up logging
-logging.basicConfig(filename='calibration_logger.log', level=logging.INFO)
+# Set up logging. Only single instance of calibration_logger.log for every module
+setup_logging()
+logging = logging.getLogger(__name__)
 
 def from_where_to_pick_memory():
     """Determine where to allocate memory."""

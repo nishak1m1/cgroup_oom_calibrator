@@ -1,5 +1,12 @@
 # parse_cgroups.py
 
+from logging_config import setup_logging
+import logging
+
+setup_logging()
+
+logger = logging.getLogger(__name__)
+
 def cgroup_parser(cgroups, sampling_interval, sampling_time):
     """Placeholder for cgroup parsing logic."""
     # This function should create sample file collecting data for sampling_interval, every sampling_time

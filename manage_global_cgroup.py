@@ -1,3 +1,10 @@
+from logging_config import setup_logging
+import logging
+
+setup_logging()
+
+logger = logging.getLogger(__name__)
+
 # manage_global_cgroup.py
 # Most of the global OOM cases are recorded when min watermark is around 15-17% short of free mark.
 # So setting the alloc thresholod to 20% of ahead of min mark.
@@ -26,20 +33,22 @@ def global_cgroup_limit_calculator():
         if pages_free is None or min_mark is None:
             raise ValueError("Could not extract values")
 
-        print(f"Pages Free: {pages_free}, Min: {min_mark}")
+        logger.info(f"Pages Free: {pages_free}, Min: {min_mark}")
+
         if pages_free > min_mark:
             min_percentage = (min_mark / pages_free) * 100
-        print(f"% to min_mark: {min_percentage:.2f}")
+        logger.info(f"% to min_mark: {min_percentage:.2f}")
+
         alloc_thrshld_prct = min_percentage - global_oom_thrshld
         alloc_thrshld_bytes = int(((alloc_thrshld_prct * pages_free)/100))*4000
-        print(f"Safer % short of global OOM: {alloc_thrshld_prct:.2f}")
-        print(f"Alloc bytes short of global oom: {alloc_thrshld_bytes}")
+        logger.info(f"Safer % short of global OOM: {alloc_thrshld_prct:.2f}")
+        logger.info(f"Alloc bytes short of global oom: {alloc_thrshld_bytes}")
         return alloc_thrshld_bytes
 
     except subprocess.CalledProcessError as e:
-        print(f"Command execution failed: {e}")
+        logger.error(f"Command execution failed: {e}")
     except ValueError as e:
-        print(f"Parsing error: {e}")
+        logger.error(f"Parsing error: {e}")
 
 def allocate_mem_from_global_cgroup(amount_of_memory):
     """Placeholder for allocating memory from the global cgroup."""
