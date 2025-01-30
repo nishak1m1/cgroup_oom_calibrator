@@ -1,8 +1,5 @@
-# main module that integrates all other modules
-
-import time
-import logging
 import json
+import threading
 from check_load import *
 from parse_cgroups import *
 from manage_global_cgroup import *
@@ -12,9 +9,57 @@ from logging_config import setup_logging
 # Set up logging. Only single instance of calibration_logger.log for every module
 setup_logging()
 logging = logging.getLogger(__name__)
-# For current cgroup with oom, what is required amound of memory to be fullfilled
-# in current iteration.
+
+# For current cgroup with oom, what is the required amount of memory to be fulfilled
+# in the current iteration.
 requirement = 0
+
+# Import necessary functions and variables from the previous script
+import os
+import struct
+import sys
+import ctypes
+
+CGROUP_PATH = "/sys/fs/cgroup/memory/cluster_sync/"
+MEMORY_OOM_CONTROL = os.path.join(CGROUP_PATH, "memory.oom_control")
+CGROUP_EVENT_CONTROL = os.path.join(CGROUP_PATH, "cgroup.event_control")
+libc = ctypes.CDLL("libc.so.6")
+
+def die(message):
+    """ Print error message and exit """
+    print(message, file=sys.stderr)
+    sys.exit(1)
+
+def create_eventfd(init_val, flags):
+    """ Create an eventfd file descriptor and return it"""
+    return libc.eventfd(init_val, flags)
+
+def write_eventfd_to_cgroup(eventfd, memory_oom_fd):
+    """ Write eventfd and memory.oom_control fd to cgroup.event_control """
+    try:
+        with open(CGROUP_EVENT_CONTROL, "w") as event_control_file:
+            event_control_file.write(f"{eventfd} {memory_oom_fd}\n")
+        print(f"Successfully registered eventfd ({eventfd}) with memory.oom_control ({memory_oom_fd})")
+    except Exception as e:
+        die(f"Error writing to {CGROUP_EVENT_CONTROL}: {e}")
+
+def monitor_eventfd(eventfd):
+    """ Continuously monitor the eventfd for OOM events """
+    logging.info("Monitoring OOM events...")
+    while True:
+        try:
+            u = os.read(eventfd, 8)
+            if len(u) != 8:
+                logging.warning(f"Warning: Did not read full 8 bytes from eventfd")
+
+            event_count = struct.unpack("Q", u)[0]
+            logging.warning(f"cluster_sync_cgroup OOM event received! count: {event_count}")
+            return True  # Indicate that an OOM event has been detected
+        except BlockingIOError:
+            # Non-blocking read: no event yet, continue
+            continue
+        except Exception as e:
+            die(f"Error reading from eventfd: {e}")
 
 def from_where_to_pick_memory(cgroup_with_oom):
     """Determine where to allocate memory."""
@@ -27,10 +72,10 @@ def from_where_to_pick_memory(cgroup_with_oom):
             data = json.load(file)
         if cgroup_with_oom in data:
             # Extract the "min" value for "memory.usage_in_bytes"
-            min_usage = data[cgroup_name].get('memory.usage_in_bytes', {}).get('min')
-            max_usage = data[cgroup_name].get('memory.max_usage_in_bytes', {}).get('max')
+            min_usage = data[cgroup_with_oom].get('memory.usage_in_bytes', {}).get('min')
+            max_usage = data[cgroup_with_oom].get('memory.max_usage_in_bytes', {}).get('max')
         else:
-            logger.warning(f"The cgroup '{cgroup_with_oom}' is not present in the JSON data.")
+            logging.warning(f"The cgroup '{cgroup_with_oom}' is not present in the JSON data.")
 
     requirement = max_usage - min_usage
 
@@ -54,10 +99,21 @@ def monitor_and_adjust(cgroups, sampling_interval):
     previous_limits = {}
     oom_detected = False
 
+    try:
+        eventfd = create_eventfd(0, 0)
+        memory_oom_fd = os.open(MEMORY_OOM_CONTROL, os.O_RDONLY)
+        write_eventfd_to_cgroup(eventfd, memory_oom_fd)
+    except Exception as e:
+        die(f"Error setting up eventfd: {e}")
+
     while True:
-        cgroup_with_oom = detect_cgroup_ooms(cgroups)
-        if cgroup_with_oom:
+        cgroup_with_oom = None
+        if monitor_eventfd(eventfd):
             logging.info("OOM detected. Initiating calibration process.")
+            cgroup_with_oom = "cluster_sync"  # Assuming the cgroup name is known
+            oom_detected = True
+
+        if cgroup_with_oom:
             if load_checker():
                 decision = from_where_to_pick_memory(cgroup_with_oom)
 
@@ -69,7 +125,7 @@ def monitor_and_adjust(cgroups, sampling_interval):
                 else:
                     logging.info("No memory available to allocate.")
         else:
-            if cgroup_with_oom and load_checker():
+            if oom_detected and load_checker():
                 logging.info("OOM resolved. Reverting limits.")
                 revert_limits(cgroups, previous_limits)
                 oom_detected = False
@@ -88,10 +144,6 @@ def store_limits(cgroups, previous_limits):
         # Assuming adjust_cgroup_limit function also retrieves current limits
         current_limit = adjust_cgroup_limit(cgroup, 0)  # Pass 0 to retrieve limit
         previous_limits[cgroup] = current_limit
-
-def from_where_to_pick_memory():
-    """Determine where to allocate memory."""
-    return "global"  # Assuming memory allocation from global cgroup for now
 
 def main():
     sampling_interval = 300  # 5 minutes
@@ -117,3 +169,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
