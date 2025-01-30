@@ -77,6 +77,10 @@ def from_where_to_pick_memory(cgroup_with_oom):
         else:
             logging.warning(f"The cgroup '{cgroup_with_oom}' is not present in the JSON data.")
 
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logging.error(f"Error reading JSON file '{file_path}': {str(e)}")
+        return []
+
     requirement = max_usage - min_usage
 
     if global_cgroup_limit_calculator() >= requirement:
