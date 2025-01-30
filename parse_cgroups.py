@@ -30,13 +30,6 @@ def generate_cgroup_directories(cgroups):
     return directories
 
 
-from logging_config import setup_logging
-import logging
-
-setup_logging()
-
-logger = logging.getLogger(__name__)
-
 def cgroup_parser(cgroups, sampling_interval, sampling_time):
     """
     Collect memory data from the cgroup directories periodically.
@@ -54,6 +47,7 @@ def cgroup_parser(cgroups, sampling_interval, sampling_time):
             logging.warning("Corrupted or empty JSON file, resetting data.")
 
     start_time = time.time()
+
     while time.time() - start_time < sampling_time:
         timestamp = datetime.now().isoformat()
         for directory in cgroup_directories:
@@ -72,12 +66,17 @@ def cgroup_parser(cgroups, sampling_interval, sampling_time):
                     logging.error(f"Error reading {file_path}: {e}")
                     cgroup_entry[key] = None
             log_data[cgroup_name].append(cgroup_entry)
+        
         # Save log data to a JSON file
         with open(OUTPUT_LOG_FILE, 'w') as json_file:
             json.dump(log_data, json_file, indent=4)
         logging.info(f"Log data collected at {timestamp}")
 
-        time.sleep(sampling_interval)
+        # Ensure the correct sampling interval
+        elapsed_time = time.time() - start_time
+        remaining_time = sampling_interval - (elapsed_time % sampling_interval)
+        if remaining_time > 0:
+            time.sleep(remaining_time)
 
 
 def create_stats_from_sample():
