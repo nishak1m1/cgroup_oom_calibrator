@@ -1,0 +1,19 @@
+import subprocess
+import time
+
+# We are triggering OOM inside cluster_sync 3times with the time gap of 2mins.
+
+# Function to trigger the memory-eating process
+def trigger_memory_eater():
+    # Start a new memory-eating process inside cgroup
+    subprocess.Popen(["sudo", "cgexec", "-g", "memory:cluster_sync", "python3", "-c", "import time; data = []; [data.append(' ' * 1024 * 1024) for _ in iter(int, 1)]"])
+
+def main():
+    # Trigger the memory-eating process multiple times
+    for _ in range(3):  # Run 3 times
+        print("Triggering memory eater process...")
+        trigger_memory_eater()
+        time.sleep(120)  # wait for 2min before triggering again
+
+if __name__ == "__main__":
+    main()
